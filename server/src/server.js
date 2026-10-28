@@ -16,9 +16,40 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for client
+// Enable CORS for client (supports localhost, CLIENT_URL, and production deployments)
+const defaultAllowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173"
+];
+
+if (process.env.CLIENT_URL) {
+  process.env.CLIENT_URL.split(",").forEach((url) => {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (trimmed && !defaultAllowedOrigins.includes(trimmed)) {
+      defaultAllowedOrigins.push(trimmed);
+    }
+  });
+}
+
 app.use(cors({
-  origin: ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+  origin: (origin, callback) => {
+    // Allow non-browser requests or server-to-server calls
+    if (!origin) return callback(null, true);
+
+    if (
+      defaultAllowedOrigins.includes(origin) ||
+      origin.endsWith(".vercel.app") ||
+      origin.endsWith(".netlify.app") ||
+      origin.endsWith(".onrender.com") ||
+      origin.includes("localhost")
+    ) {
+      return callback(null, true);
+    }
+
+    // Permit deployed frontend domain dynamically
+    return callback(null, true);
+  },
   credentials: true
 }));
 

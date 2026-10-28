@@ -1,5 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
-const SERVER_URL = API_BASE_URL.replace(/\/api$/, "");
+const rawApiUrl = (import.meta.env.VITE_API_URL || "https://sri-salasar-marketing.onrender.com").replace(/\/+$/, "");
+const API_BASE_URL = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl}/api`;
+const SERVER_URL = "https://sri-salasar-marketing.onrender.com/api";
 
 const readResponse = async (response, action) => {
   const data = await response.json();
