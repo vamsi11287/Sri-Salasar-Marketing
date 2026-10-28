@@ -35,6 +35,8 @@ import { api, getFullFileUrl } from "../services/api";
 export default function AdminPortal({
   products = [],
   setProducts,
+  categories = [],
+  setCategories,
   enquiries = [],
   setEnquiries,
   onClose
@@ -49,9 +51,21 @@ export default function AdminPortal({
       return null;
     }
   });
-  const productCategoryOptions = Array.from(
-    new Set(products.map((product) => product.category).filter(Boolean))
-  );
+
+  // Category Management State
+  const [localCategories, setLocalCategories] = useState([]);
+  const [showCreateCatModal, setShowCreateCatModal] = useState(false);
+  const [showCategoriesListModal, setShowCategoriesListModal] = useState(false);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [catSearchQuery, setCatSearchQuery] = useState("");
+  const [catForm, setCatForm] = useState({ name: "", description: "" });
+  const [editingCatId, setEditingCatId] = useState(null);
+  const [editingCatForm, setEditingCatForm] = useState({ name: "", description: "" });
+
+  // Categories strictly fetched from database (no local/synthesized categories)
+  const activeCategories = React.useMemo(() => {
+    return Array.isArray(categories) && categories.length ? categories : localCategories;
+  }, [categories, localCategories]);
 
   // Login Form State
   const [loginEmail, setLoginEmail] = useState("");
@@ -80,8 +94,8 @@ export default function AdminPortal({
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [documentsList, setDocumentsList] = useState([]);
 
-  // Product Form State
-  const [productForm, setProductForm] = useState({
+  // Product Form Initial Blank State
+  const emptyProductForm = {
     name: "",
     category: "",
     detail: "",
@@ -97,7 +111,35 @@ export default function AdminPortal({
     colors: "",
     features: [],
     cloudinaryPublicId: ""
-  });
+  };
+
+  // Product Form State
+  const [productForm, setProductForm] = useState(emptyProductForm);
+
+  // Open Create Product Modal with clean, blank state (Requirement #2)
+  const handleOpenCreateProduct = () => {
+    setEditingProduct(null);
+    const defaultCat = activeCategories[0]
+      ? (typeof activeCategories[0] === "string" ? activeCategories[0] : activeCategories[0].name)
+      : "";
+    setProductForm({
+      ...emptyProductForm,
+      category: defaultCat
+    });
+    setNewFeatureText("");
+    setPendingImagePreviews([]);
+    setImageUploadMode("file");
+    setShowAddModal(true);
+  };
+
+  // Close Product Modal and reset form so no stale data remains (Requirement #2)
+  const handleCloseProductModal = () => {
+    setShowAddModal(false);
+    setEditingProduct(null);
+    setProductForm(emptyProductForm);
+    setNewFeatureText("");
+    setPendingImagePreviews([]);
+  };
 
   const [newFeatureText, setNewFeatureText] = useState("");
 
@@ -250,7 +292,20 @@ export default function AdminPortal({
     }
   };
 
-  // Check and sync token / documents / enquiries on mount
+  // Refresh categories strictly from MongoDB database
+  const refreshCategoriesFromDb = async () => {
+    try {
+      const cats = await api.getCategories();
+      if (Array.isArray(cats)) {
+        if (setCategories) setCategories(cats);
+        setLocalCategories(cats);
+      }
+    } catch (error) {
+      console.warn("Could not load categories from database:", error);
+    }
+  };
+
+  // Check and sync token / documents / categories / enquiries on mount
   useEffect(() => {
     // Load documents
     api.getDocuments().then((docs) => {
@@ -259,7 +314,88 @@ export default function AdminPortal({
       console.error("Could not load documents from the database:", error);
       setNotice("Could not load documents from the database.");
     });
+
+    // Load categories strictly from database
+    refreshCategoriesFromDb();
   }, []);
+
+  // Category Actions - strictly persisted and retrieved from database
+  const handleSaveCategory = async (e) => {
+    e.preventDefault();
+    const name = catForm.name.trim();
+    if (!name) return;
+
+    setSavingCategory(true);
+    try {
+      await api.createCategory(
+        { name, description: catForm.description },
+        token
+      );
+
+      // Re-fetch strictly from database
+      await refreshCategoriesFromDb();
+
+      // If the product modal is open, immediately select this newly created category
+      setProductForm((prev) => ({
+        ...prev,
+        category: name
+      }));
+
+      triggerNotice(`Category "${name}" created and saved in database.`);
+      setShowCreateCatModal(false);
+      setCatForm({ name: "", description: "" });
+    } catch (err) {
+      console.error("Create category error:", err);
+      alert(`Could not create category: ${err.message}`);
+      triggerNotice(`Failed to create category: ${err.message}`);
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  const handleUpdateCategory = async (id, updatedData) => {
+    try {
+      await api.updateCategory(id, updatedData, token);
+      await refreshCategoriesFromDb();
+
+      // Update products state if category name changed
+      if (updatedData.name) {
+        const oldCatObj = activeCategories.find((c) => (c._id || c.id) === id);
+        const oldCatName = oldCatObj?.name;
+        if (oldCatName) {
+          setProducts((prev) =>
+            prev.map((p) => (p.category === oldCatName ? { ...p, category: updatedData.name } : p))
+          );
+        }
+      }
+
+      setEditingCatId(null);
+      triggerNotice(`Category updated in database successfully.`);
+    } catch (err) {
+      alert(`Could not update category: ${err.message}`);
+    }
+  };
+
+  const handleDeleteCategory = async (cat) => {
+    const catId = cat._id || cat.id;
+    const catName = cat.name;
+    const count = products.filter((p) => p.category === catName).length;
+
+    let confirmMsg = `Are you sure you want to delete category "${catName}"?`;
+    if (count > 0) {
+      confirmMsg += `\nWarning: There are ${count} product(s) currently assigned to this category.`;
+    }
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await api.deleteCategory(catId, token);
+      await refreshCategoriesFromDb();
+      triggerNotice(`Category "${catName}" deleted from database.`);
+    } catch (err) {
+      alert(`Could not delete category: ${err.message}`);
+    }
+  };
 
   useEffect(() => {
     if (token) {
@@ -374,27 +510,8 @@ export default function AdminPortal({
         triggerNotice(`Product "${payload.name}" saved to database successfully.`);
       }
 
-      // Close modal and reset form only on success
-      setShowAddModal(false);
-      setEditingProduct(null);
-      setProductForm({
-        name: "",
-        category: "",
-        detail: "",
-        price: "",
-        moq: "",
-        status: "Active",
-        description: "",
-        image: "",
-        images: [],
-        material: "",
-        loadRating: "",
-        sizes: "",
-        colors: "",
-        features: [],
-        cloudinaryPublicId: ""
-      });
-      setNewFeatureText("");
+      // Close modal and reset form only on success (Requirement #2)
+      handleCloseProductModal();
     } catch (err) {
       console.error("Save product error:", err);
       alert(`Could not save product to database: ${err.message}`);
@@ -406,9 +523,12 @@ export default function AdminPortal({
 
   const handleEditClick = (p) => {
     setEditingProduct(p);
+    const defaultCat = activeCategories[0]
+      ? (typeof activeCategories[0] === "string" ? activeCategories[0] : activeCategories[0].name)
+      : "";
     setProductForm({
       name: p.name || "",
-      category: p.category || "",
+      category: p.category || defaultCat,
       detail: p.detail || "",
       price: p.price || "",
       moq: p.moq || "",
@@ -693,16 +813,47 @@ export default function AdminPortal({
                     Add new products, adjust live wholesale prices inline, and configure size charts.
                   </p>
                 </div>
-                <button
-                  className="admin-primary-btn"
-                  onClick={() => {
-                    setEditingProduct(null);
-                    setShowAddModal(true);
-                  }}
-                >
-                  <Plus size={16} />
-                  <span>Add New Product</span>
-                </button>
+                <div className="admin-header-actions-col">
+                  <button
+                    type="button"
+                    className="admin-primary-btn"
+                    onClick={handleOpenCreateProduct}
+                    id="btn-add-product"
+                  >
+                    <Plus size={16} />
+                    <span>Add New Product</span>
+                  </button>
+
+                  <div className="admin-category-sub-actions">
+                    <button
+                      type="button"
+                      className="admin-create-category-btn"
+                      onClick={() => {
+                        setCatForm({ name: "", description: "" });
+                        setShowCreateCatModal(true);
+                      }}
+                      id="btn-create-category"
+                      title="Create a new industrial product category"
+                    >
+                      <Plus size={14} />
+                      <span>Create Product Category</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="admin-view-categories-icon-btn"
+                      onClick={() => setShowCategoriesListModal(true)}
+                      id="btn-view-all-categories"
+                      title="See all categories"
+                      aria-label="See all categories"
+                    >
+                      <Layers size={16} />
+                      <span className="cat-count-pill" title={`${activeCategories.length} categories`}>
+                        {activeCategories.length}
+                      </span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Search in products */}
@@ -1055,7 +1206,7 @@ export default function AdminPortal({
       </div>
 
       {/* Add / Edit Product Modal */}
-      {(showAddModal || editingProduct) && (
+      {showAddModal && (
         <div className="admin-modal-overlay">
           <div className="admin-modal-window animate-scaleUp">
             <div className="admin-modal-header">
@@ -1066,10 +1217,8 @@ export default function AdminPortal({
               </h3>
               <button
                 className="cat-close-btn"
-                onClick={() => {
-                  setShowAddModal(false);
-                  setEditingProduct(null);
-                }}
+                onClick={handleCloseProductModal}
+                title="Close"
               >
                 <X size={18} />
               </button>
@@ -1088,18 +1237,48 @@ export default function AdminPortal({
                 </div>
 
                 <div className="form-field">
-                  <label>Category *</label>
-                  <input
-                    list="admin-product-categories"
-                    required
-                    value={productForm.category}
-                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                  />
-                  <datalist id="admin-product-categories">
-                    {productCategoryOptions.map((category) => (
-                      <option key={category} value={category} />
-                    ))}
-                  </datalist>
+                  <div className="form-field-header-flex">
+                    <label htmlFor="product-category-dropdown">Category *</label>
+                    <button
+                      type="button"
+                      className="field-action-link-btn"
+                      onClick={() => {
+                        setCatForm({ name: "", description: "" });
+                        setShowCreateCatModal(true);
+                      }}
+                      title="Create new category without closing this modal"
+                    >
+                      <Plus size={12} />
+                      <span>New Category</span>
+                    </button>
+                  </div>
+                  <div className="category-select-control">
+                    <select
+                      id="product-category-dropdown"
+                      className="admin-select-input admin-category-dropdown"
+                      required
+                      value={productForm.category}
+                      onChange={(e) => {
+                        if (e.target.value === "__NEW__") {
+                          setCatForm({ name: "", description: "" });
+                          setShowCreateCatModal(true);
+                        } else {
+                          setProductForm({ ...productForm, category: e.target.value });
+                        }
+                      }}
+                    >
+                      <option value="" disabled>-- Select Industrial Category --</option>
+                      {activeCategories.map((cat) => {
+                        const catName = typeof cat === "string" ? cat : cat.name;
+                        return (
+                          <option key={cat._id || catName} value={catName}>
+                            {catName}
+                          </option>
+                        );
+                      })}
+                      <option value="__NEW__">➕ + Create New Category...</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -1455,15 +1634,272 @@ export default function AdminPortal({
                 <button
                   type="button"
                   className="admin-cancel-btn"
-                  onClick={() => {
-                    setShowAddModal(false);
-                    setEditingProduct(null);
-                  }}
+                  onClick={handleCloseProductModal}
                 >
                   Cancel
                 </button>
                 <button type="submit" className="admin-primary-btn" disabled={uploadingImage || savingProduct}>
                   {savingProduct ? "Saving to Database..." : (editingProduct ? "Save Changes" : "Create Product")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* All Product Categories Directory Modal */}
+      {showCategoriesListModal && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-window admin-cat-list-modal animate-scaleUp">
+            <div className="admin-modal-header">
+              <div className="cat-modal-header-left">
+                <div className="cat-icon-badge">
+                  <Layers size={18} />
+                </div>
+                <div>
+                  <h3>Product Categories Directory</h3>
+                  <p>Manage all product categories, inspect assigned items, or create new ones.</p>
+                </div>
+              </div>
+              <div className="cat-header-right-actions">
+                <button
+                  type="button"
+                  className="admin-add-cat-top-btn"
+                  onClick={() => {
+                    setCatForm({ name: "", description: "" });
+                    setShowCreateCatModal(true);
+                  }}
+                >
+                  <Plus size={15} />
+                  <span>Add Category</span>
+                </button>
+                <button
+                  className="cat-close-btn"
+                  onClick={() => {
+                    setShowCategoriesListModal(false);
+                    setEditingCatId(null);
+                  }}
+                  title="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-cat-modal-body">
+              {/* Search filter for categories */}
+              <div className="admin-search-row cat-search-bar">
+                <div className="admin-search-input">
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="Search categories by name or description..."
+                    value={catSearchQuery}
+                    onChange={(e) => setCatSearchQuery(e.target.value)}
+                  />
+                </div>
+                <span className="cat-total-badge">
+                  Total: {activeCategories.length} categories
+                </span>
+              </div>
+
+              <div className="admin-table-wrapper cat-table-wrapper">
+                <table className="admin-data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "35%" }}>Category Name</th>
+                      <th>Description</th>
+                      <th style={{ width: "15%", textAlign: "center" }}>Products Count</th>
+                      <th className="text-right" style={{ width: "15%" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeCategories.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: "center", padding: "36px 16px", color: "#64748b" }}>
+                          No categories found in database. Click <strong>"Add Category"</strong> above to create your first category.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeCategories
+                        .filter((cat) => {
+                          const q = catSearchQuery.toLowerCase().trim();
+                          const name = typeof cat === "string" ? cat : cat.name;
+                          const desc = typeof cat === "object" ? cat.description || "" : "";
+                          return !q || name.toLowerCase().includes(q) || desc.toLowerCase().includes(q);
+                        })
+                        .map((cat) => {
+                          const catId = typeof cat === "object" ? (cat._id || cat.id) : cat;
+                          const catName = typeof cat === "string" ? cat : cat.name;
+                          const catDesc = typeof cat === "object" ? cat.description : "";
+                          const count = products.filter((p) => p.category === catName).length;
+                          const isEditing = editingCatId === catId;
+
+                          return (
+                            <tr key={catId || catName}>
+                              <td>
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="quick-edit-cat-input"
+                                    value={editingCatForm.name}
+                                    onChange={(e) =>
+                                      setEditingCatForm({ ...editingCatForm, name: e.target.value })
+                                    }
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <div className="cat-table-name-cell">
+                                    <span className="cat-bullet" />
+                                    <span className="cat-name-bold">{catName}</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="quick-edit-cat-input"
+                                    placeholder="Description..."
+                                    value={editingCatForm.description}
+                                    onChange={(e) =>
+                                      setEditingCatForm({ ...editingCatForm, description: e.target.value })
+                                    }
+                                  />
+                                ) : (
+                                  <span className="cat-desc-text">
+                                    {catDesc || <span className="text-muted">—</span>}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ textAlign: "center" }}>
+                                <span className="badge-prod-count">
+                                  {count} {count === 1 ? "product" : "products"}
+                                </span>
+                              </td>
+                              <td className="text-right">
+                                {isEditing ? (
+                                  <div className="cat-action-btns">
+                                    <button
+                                      type="button"
+                                      className="table-icon-btn save-btn"
+                                      onClick={() => handleUpdateCategory(catId, editingCatForm)}
+                                      title="Save Changes"
+                                    >
+                                      <Check size={16} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="table-icon-btn cancel-btn"
+                                      onClick={() => setEditingCatId(null)}
+                                      title="Cancel Edit"
+                                    >
+                                      <X size={16} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="cat-action-btns">
+                                    <button
+                                      type="button"
+                                      className="table-icon-btn edit-btn"
+                                      onClick={() => {
+                                        setEditingCatId(catId);
+                                        setEditingCatForm({ name: catName, description: catDesc || "" });
+                                      }}
+                                      title="Edit Category"
+                                    >
+                                      <Pencil size={15} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="table-icon-btn delete-btn"
+                                      onClick={() => handleDeleteCategory(cat)}
+                                      title="Delete Category"
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Product Category Modal (Always on Top) */}
+      {showCreateCatModal && (
+        <div className="admin-modal-overlay admin-submodal-overlay">
+          <div className="admin-modal-window admin-cat-modal animate-scaleUp">
+            <div className="admin-modal-header">
+              <div className="cat-modal-header-left">
+                <div className="cat-icon-badge">
+                  <Layers size={18} />
+                </div>
+                <div>
+                  <h3>Create Product Category</h3>
+                  <p>Define a new industrial category to classify your products.</p>
+                </div>
+              </div>
+              <button
+                className="cat-close-btn"
+                onClick={() => {
+                  setShowCreateCatModal(false);
+                  setCatForm({ name: "", description: "" });
+                }}
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCategory} className="admin-modal-form">
+              <div className="form-field">
+                <label>Category Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Stainless Steel Cable Ties, Heat Shrinkable Tubes"
+                  value={catForm.name}
+                  onChange={(e) => setCatForm({ ...catForm, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+
+              <div className="form-field">
+                <label>Category Description (Optional)</label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Marine-grade 304 & 316 ball-lock stainless steel cable ties for corrosive environments."
+                  value={catForm.description}
+                  onChange={(e) => setCatForm({ ...catForm, description: e.target.value })}
+                />
+              </div>
+
+              <div className="modal-form-actions">
+                <button
+                  type="button"
+                  className="admin-cancel-btn"
+                  onClick={() => {
+                    setShowCreateCatModal(false);
+                    setCatForm({ name: "", description: "" });
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="admin-primary-btn"
+                  disabled={savingCategory || !catForm.name.trim()}
+                >
+                  <Plus size={15} />
+                  <span>{savingCategory ? "Creating Category..." : "Save Category"}</span>
                 </button>
               </div>
             </form>

@@ -1,6 +1,19 @@
-const rawApiUrl = (import.meta.env.VITE_API_URL || "https://sri-salasar-marketing.onrender.com").replace(/\/+$/, "");
+const getRawApiUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ) {
+    return "http://localhost:5000";
+  }
+  return "https://sri-salasar-marketing.onrender.com";
+};
+
+const rawApiUrl = getRawApiUrl().replace(/\/+$/, "");
 const API_BASE_URL = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl}/api`;
-const SERVER_URL = "https://sri-salasar-marketing.onrender.com/api";
+const SERVER_URL = API_BASE_URL;
 
 const readResponse = async (response, action) => {
   const data = await response.json();
@@ -108,6 +121,63 @@ export const api = {
     return await readResponse(res, "Deleting image from Cloudinary");
   },
 
+  // CATEGORIES
+  async getCategories() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/categories`);
+      const data = await readResponse(res, "Fetching categories");
+      return Array.isArray(data.data) ? data.data : [];
+    } catch (err) {
+      console.warn("Could not fetch categories from backend:", err.message);
+      return [];
+    }
+  },
+
+  async createCategory(categoryData, token) {
+    const res = await fetch(`${API_BASE_URL}/categories`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(categoryData)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to create category (Status: ${res.status})`);
+    }
+    return data;
+  },
+
+  async updateCategory(id, categoryData, token) {
+    const res = await fetch(`${API_BASE_URL}/categories/${id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(categoryData)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to update category (Status: ${res.status})`);
+    }
+    return data;
+  },
+
+  async deleteCategory(id, token) {
+    const res = await fetch(`${API_BASE_URL}/categories/${id}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to delete category (Status: ${res.status})`);
+    }
+    return data;
+  },
 
   // ENQUIRIES
   async submitEnquiry(enquiryData) {

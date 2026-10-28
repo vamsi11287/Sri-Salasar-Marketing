@@ -32,6 +32,7 @@ import GallerySection from "./components/GallerySection";
 export default function App() {
   const [products, setProducts] = useState([]);
   const [productsError, setProductsError] = useState("");
+  const [categories, setCategories] = useState([]);
   const [enquiries, setEnquiries] = useState([]);
 
   // Navigation State
@@ -45,10 +46,11 @@ export default function App() {
   const [mobileFrameOpen, setMobileFrameOpen] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
 
-  // Fetch products from the backend on mount.
+  // Fetch products & categories from the backend on mount.
   useEffect(() => {
     let isMounted = true;
 
+    // Fetch Products
     api.getProducts().then((data) => {
       if (isMounted && Array.isArray(data)) {
         setProducts(data);
@@ -57,6 +59,17 @@ export default function App() {
       if (isMounted) {
         console.error("Could not load products from the database:", error);
         setProductsError("Products could not be loaded. Please try again later.");
+      }
+    });
+
+    // Fetch Categories
+    api.getCategories().then((data) => {
+      if (isMounted && Array.isArray(data)) {
+        setCategories(data);
+      }
+    }).catch((error) => {
+      if (isMounted) {
+        console.warn("Could not load categories from backend:", error);
       }
     });
 
@@ -141,6 +154,7 @@ export default function App() {
           <>
             <ProductsPage
               products={products}
+              categories={categories}
               selectedCategory={selectedCategory}
               setSelectedCategory={setSelectedCategory}
               onSelectProduct={handleSelectProduct}
@@ -252,6 +266,8 @@ export default function App() {
         <AdminPortal
           products={products}
           setProducts={setProducts}
+          categories={categories}
+          setCategories={setCategories}
           enquiries={enquiries}
           setEnquiries={setEnquiries}
           onClose={() => setAdminOpen(false)}

@@ -15,6 +15,7 @@ import { getFullFileUrl } from "../services/api";
 
 export default function ProductsPage({
   products = [],
+  categories = [],
   selectedCategory,
   setSelectedCategory,
   onSelectProduct,
@@ -23,10 +24,12 @@ export default function ProductsPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSize, setSelectedSize] = useState("All Sizes");
   const [selectedColor, setSelectedColor] = useState("All Colours");
-  const productCategories = useMemo(
-    () => Array.from(new Set(products.map((product) => product.category).filter(Boolean))),
-    [products]
-  );
+  const productCategories = useMemo(() => {
+    if (Array.isArray(categories) && categories.length > 0) {
+      return categories.map((c) => (typeof c === "string" ? c : c.name)).filter(Boolean);
+    }
+    return [];
+  }, [categories]);
 
   // Dynamic Size and Color extraction from product list
   const availableSizes = useMemo(() => {
